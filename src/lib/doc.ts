@@ -3,6 +3,7 @@ import path from 'path';
 import type { Link, Text } from 'mdast';
 import { remark } from 'remark';
 import { selectAll } from 'unist-util-select';
+import { visit } from 'unist-util-visit';
 import decodeUriComponent from 'decode-uri-component';
 import yaml from 'yaml';
 
@@ -24,11 +25,12 @@ export async function buildDoc(doc: TreeNode, mapping: Record<string, TreeNode>)
     .use([
       [ replaceHTML ],
       [ relativeLink, { doc, mapping }],
-      [ downloadAsset, { doc, mapping }],
+      [ transformImages, { doc, mapping }],
+      [ transformStrongs],
     ])
     .process(docDetail.body);
 
-  doc.content = frontmatter(doc) + recoverMathBlocks(content.toString());
+  doc.content = frontmatter(doc) + recoverObsidianSyntax(content.toString());
 
   // FIXME: remark will transform `*` to `\*`
   doc.content = doc.content.replaceAll('\\*', '*');
@@ -38,7 +40,7 @@ export async function buildDoc(doc: TreeNode, mapping: Record<string, TreeNode>)
 
 function frontmatter(doc) {
   const frontMatter = yaml.stringify({
-    title: doc.title,
+    //title: doc.title,
     url: `${host}/${doc.namespace}/${doc.url}`,
     // slug: doc.slug,
     // public: doc.public,
@@ -51,10 +53,14 @@ function frontmatter(doc) {
 function replaceHTML() {
   return tree => {
     const htmlNodes = selectAll('html', tree) as Text[];
+    const re = /<a name\=.*?><\/a>/;
     for (const node of htmlNodes) {
       if (node.value === '<br />' || node.value === '<br/>') {
         node.type = 'text';
         node.value = '\n';
+      } else if (node.value.includes('<a name=') || node.value === '</a>') {
+        node.type = 'text';
+        node.value = '';
       }
     }
   };
@@ -92,35 +98,99 @@ function isYuqueDocLink(url?: string) {
   return true;
 }
 
-function downloadAsset(opts: Options) {
+function transformImages(opts: Options) {
   return async tree => {
     const docFilePath = opts.doc.filePath;
     const assetsDir = path.join(docFilePath.split('/')[0], 'assets');
 
     // FIXME: 语雀附件现在不允许直接访问，需要登录后才能下载，这里先跳过。
     // const assetNodes = selectAll(`image[url^=http], link[url^=${host}/attachments/]`, tree) as Link[];
-    const assetNodes = selectAll('image[url^=http]', tree) as Link[];
-    for (const node of assetNodes) {
-      const urlObject = new URL(node.url);
-      if (!urlObject.pathname.includes('__latex')) {
-        const assetName = `${opts.doc.url}/${urlObject.pathname.split('/').pop()}`;
-        const filePath = path.join(assetsDir, assetName);
-        await download(node.url, path.join(outputDir, filePath), { headers: { 'User-Agent': userAgent } });
-        node.url = path.relative(path.dirname(docFilePath), filePath);
+    visit(tree, function (node, index, parent) {
+      if (
+        parent &&
+        typeof index === 'number' &&
+        node.type === 'image' &&
+        node.url.includes('https:')
+      ) {
+        const urlObject = new URL(node.url);
+        const reCode = /^#card=math&code=(?<code>.*?)&/g;
+        if (urlObject.pathname.includes('__latex')) {
+          const match = reCode.exec(urlObject.hash);
+          node.alt = 'MATH';
+          node.url = match.groups.code;
+        } else {
+          const assetName = `${opts.doc.url}/${urlObject.pathname.split('/').pop()}`;
+          const filePath = path.join(assetsDir, assetName);
+          download(node.url, path.join(outputDir, filePath), { headers: { 'User-Agent': userAgent } });
+          //node.url = path.relative(path.dirname(docFilePath), filePath);
+          node.alt = 'IMAGE';
+          node.url = assetName;
+          node.title = '';
+        }
       }
-    }
+    });
   };
 }
 
-function recoverMathBlocks(mdstring) {
-  // 替换所有公式链接为公式本身。
-  return mdstring.replaceAll(
-    /\!\[\]\(https.*?\/\_\_latex\/.*?\&code\=(.*?)\\\&.*?\)/g,
-    (match, p1, offset, string) => {
-      const mathExp = decodeUriComponent(p1);
-      return mathExp.includes('\\begin') || mathExp.includes('$')
-        ? `\$\$\n${mathExp}\n\$\$`
-        : `\$${mathExp}\$`;
+function transformStrongs() {
+  return async tree => {
+    visit(tree, function (node, index, parent) {
+      if (
+        parent &&
+        parent.type === 'strong' &&
+        node.type === 'text'
+        ) {
+        node.value = node.value + '\u200B';
+      }
+    });
+  };
+}
+
+function recoverObsidianSyntax(mdstring) {
+  const reImage = /\!\[IMAGE\]\((.*?)\)/g;
+  const reMath = /(\n\>? ?)\!\[MATH\]\(([^\!]*?)\)([,，]?)\n/g;
+  const reInlineMath = / ?\!\[MATH\]\((.*?)\) ?/g;
+  return mdstring
+  .replaceAll(
+    // 替换所有公式链接为公式本身。
+    reMath,
+    (match, p1, p2, p3, offset, string) => {
+      const mathExp = decodeUriComponent(p2);
+      return `${p1}$$\n${mathExp}${p3 ? ',' : ''}\n$$\n`;
     }
+  ).replaceAll(
+    // 替换所有公式链接为公式本身。
+    reInlineMath,
+    (match, p1, offset, string) => {
+      const mathExp = decodeUriComponent(p1).replaceAll('\n', '');
+      return ` $${mathExp}$ `;
+    }
+  ).replaceAll(
+    // 替换所有图片链接为 Obsidian 格式。
+    reImage,
+    '![[$1]]'
+  ).replaceAll(
+    // 替换所有标题前的多换行为单换行。
+    /\n+?\#/g,
+    '\n\n#'
+  ).replaceAll(
+    // 替换所有高亮块。
+    /\:\:\:([a-z])/g,
+    '\`\`\`ad-$1'
+  ).replaceAll(
+    /\:\:\:/g,
+    '\`\`\`'
+  ).replaceAll(
+    // 给没加 zero-width space 的 strongs 加上。
+    /）[\\]?\*[\\]?\*/g,
+    '）\u200B**'
+  ).replaceAll(
+    // 替换奇怪的 checkbox 转义。
+    /\- \\\[/g,
+    '- ['
+  ).replaceAll(
+    // 把'&#x20'全换成空格。
+    /\&\#x20;/g,
+    ' '
   );
 }
