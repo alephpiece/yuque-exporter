@@ -52,9 +52,6 @@ function transformWithMdast(mdstring) {
     mdastExtensions: [gfmTableFromMarkdown]
   });
 
-  // debugging
-  console.log(JSON.stringify(tree, null, 2));
-
   // 遍历整个 mdast，分别处理各种 nodes。
   visit(tree, visitor);
 
