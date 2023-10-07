@@ -115,7 +115,7 @@ function relativeLink({ doc, mapping }: Options) {
       const { pathname } = new URL(node.url);
       const targetNode = mapping[pathname.substring(1)];
       if (!targetNode) {
-        console.warn(`[WARN] ${node.url}, ${pathname.substring(1)} not found`);
+        console.warn(`[WARN] link []${node.url}, ${pathname.substring(1)} not found for \"${doc.filePath}\"`);
       } else {
         node.url = path.relative(path.dirname(doc.filePath), targetNode.filePath) + '.md';
       }
@@ -141,16 +141,16 @@ function transformImages(opts: Options) {
       if (
         parent &&
         typeof index === 'number' &&
-        node.type === 'image' &&
-        node.url.includes('https:')
+        node.type === 'image'
       ) {
-        const urlObject = new URL(node.url);
-        const reCode = /^#card=math&code=(?<code>.*?)&/g;
-        if (urlObject.pathname.includes('__latex')) {
-          const match = reCode.exec(urlObject.hash);
+        const reCode = /#card=math\\?\&code=(?<code>.*?)\\?\&id/g;
+        if (node.url.includes('card=math')) {
+          const match = reCode.exec(node.url);
           node.alt = 'MATH';
           node.url = match.groups.code;
-        } else {
+        }
+        else if (node.url.includes('https:')) {
+          const urlObject = new URL(node.url);
           const assetName = `${opts.doc.url}/${urlObject.pathname.split('/').pop()}`;
           const filePath = path.join(assetsDir, assetName);
           download(node.url, path.join(outputDir, filePath), { headers: { 'User-Agent': userAgent } });
