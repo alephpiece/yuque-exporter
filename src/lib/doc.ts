@@ -3,7 +3,11 @@ import path from 'path';
 import type { Link, Text } from 'mdast';
 import { remark } from 'remark';
 import { selectAll } from 'unist-util-select';
-import { visit } from 'unist-util-visit';
+import { visit, SKIP, CONTINUE} from 'unist-util-visit';
+import {gfmTable} from 'micromark-extension-gfm-table'
+import {gfmTableFromMarkdown, gfmTableToMarkdown} from 'mdast-util-gfm-table'
+import {fromMarkdown} from 'mdast-util-from-markdown'
+import {toMarkdown} from 'mdast-util-to-markdown'
 import decodeUriComponent from 'decode-uri-component';
 import yaml from 'yaml';
 
@@ -20,22 +24,69 @@ interface Options {
 
 export async function buildDoc(doc: TreeNode, mapping: Record<string, TreeNode>) {
   const docDetail = await readJSON(path.join(metaDir, doc.namespace, 'docs', `${doc.url}.json`));
+
+  // remark 处理链接，后续用 mdast-util 处理 HTML 和表格。
   const content = await remark()
     .data('settings', { bullet: '-', listItemIndent: 'one' })
     .use([
-      [ replaceHTML ],
       [ relativeLink, { doc, mapping }],
       [ transformImages, { doc, mapping }],
-      [ transformStrongs],
     ])
     .process(docDetail.body);
-
-  doc.content = frontmatter(doc) + recoverObsidianSyntax(content.toString());
+  
+  doc.content = frontmatter(doc) +
+    transformWithRegex(
+      transformWithMdast(content.toString()
+      )
+    );
 
   // FIXME: remark will transform `*` to `\*`
   doc.content = doc.content.replaceAll('\\*', '*');
 
   return doc;
+}
+
+function transformWithMdast(mdstring) {
+  const tree = fromMarkdown(mdstring, {
+    extensions: [gfmTable],
+    mdastExtensions: [gfmTableFromMarkdown]
+  });
+
+  // debugging
+  console.log(JSON.stringify(tree, null, 2));
+
+  // 遍历整个 mdast，分别处理各种 nodes。
+  visit(tree, visitor);
+
+  function visitor(node, parent) {
+    switch (node.type) {
+      case 'table':
+        // 不要进入 table。
+        return SKIP;
+      case 'html':
+        // 清理不必要的 HTML 标记。
+        if (node.value === '<br />' ||
+          node.value === '<br/>') {
+          node.type = 'text';
+          node.value = '\n';
+        } else if (node.value.includes('<a name=') ||
+          node.value === '</a>') {
+          node.type = 'text';
+          node.value = '';
+        }
+        break;
+      case 'text':
+        // 给 strongs 加上 zero-width spaces。
+        if (parent && parent.type === 'strong')
+          node.value = node.value + '\u200B';
+        break;
+      default:
+        break;
+    }
+    return CONTINUE;
+  };
+
+  return toMarkdown(tree, {extensions: [gfmTableToMarkdown()]});
 }
 
 function frontmatter(doc) {
@@ -48,22 +99,6 @@ function frontmatter(doc) {
     // description: doc.description,
   });
   return `---\n${frontMatter}---\n\n`;
-}
-
-function replaceHTML() {
-  return tree => {
-    const htmlNodes = selectAll('html', tree) as Text[];
-    const re = /<a name\=.*?><\/a>/;
-    for (const node of htmlNodes) {
-      if (node.value === '<br />' || node.value === '<br/>') {
-        node.type = 'text';
-        node.value = '\n';
-      } else if (node.value.includes('<a name=') || node.value === '</a>') {
-        node.type = 'text';
-        node.value = '';
-      }
-    }
-  };
 }
 
 function relativeLink({ doc, mapping }: Options) {
@@ -132,21 +167,7 @@ function transformImages(opts: Options) {
   };
 }
 
-function transformStrongs() {
-  return async tree => {
-    visit(tree, function (node, index, parent) {
-      if (
-        parent &&
-        parent.type === 'strong' &&
-        node.type === 'text'
-        ) {
-        node.value = node.value + '\u200B';
-      }
-    });
-  };
-}
-
-function recoverObsidianSyntax(mdstring) {
+function transformWithRegex(mdstring) {
   const reImage = /\!\[IMAGE\]\((.*?)\)/g;
   const reMath = /(\n\>? ?)\!\[MATH\]\(([^\!]*?)\)([,，]?)\n/g;
   const reInlineMath = / ?\!\[MATH\]\((.*?)\) ?/g;
@@ -186,7 +207,7 @@ function recoverObsidianSyntax(mdstring) {
     '）\u200B**'
   ).replaceAll(
     // 替换奇怪的 checkbox 转义。
-    /\- \\\[/g,
+    /[\-\*] +\\\[/g,
     '- ['
   ).replaceAll(
     // 把'&#x20'全换成空格。

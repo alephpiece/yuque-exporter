@@ -10,6 +10,8 @@
     "decode-uri-component": "^0.4.1",
     "fast-glob": "^3.2.12",
     "filenamify": "^5.1.1",
+    "mdast-util-gfm-table": "^1.0.6",
+    "micromark-extension-gfm-table": "^1.0.5",
     "p-queue": "^7.3.0",
     "performant-array-to-tree": "^1.11.0",
     "remark": "^14.0.2",
