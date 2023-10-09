@@ -117,7 +117,7 @@ function relativeLink({ doc, mapping }: Options) {
       if (!targetNode) {
         console.warn(`[WARN] link []${node.url}, ${pathname.substring(1)} not found for \"${doc.filePath}\"`);
       } else {
-        node.url = path.relative(path.dirname(doc.filePath), targetNode.filePath) + '.md';
+        node.url = targetNode.filePath;
       }
     }
   };
@@ -166,18 +166,26 @@ function transformImages(opts: Options) {
 
 function transformWithRegex(mdstring) {
   const reImage = /\!\[IMAGE\]\((.*?)\)/g;
-  const reMath = /(\n\>? ?)\!\[MATH\]\(([^\!]*?)\)([,，]?)\n/g;
+  const reMathQuote = /\n\> \!\[MATH\]\(([^\!]*?)\)([,，]?)\n/g;
+  const reMath = /\n\!\[MATH\]\(([^\!]*?)\)([,，]?)\n/g;
   const reInlineMath = / ?\!\[MATH\]\((.*?)\) ?/g;
   return mdstring
   .replaceAll(
-    // 替换所有公式链接为公式本身。
-    reMath,
-    (match, p1, p2, p3, offset, string) => {
-      const mathExp = decodeUriComponent(p2);
-      return `${p1}$$\n${mathExp}${p3 ? ',' : ''}\n$$\n`;
+    // 替换所有 block quote 中的公式的链接为公式本身。
+    reMathQuote,
+    (match, p1, p2, offset, string) => {
+      const mathExp = decodeUriComponent(p1);
+      return `\n> $$\n> ${mathExp.replaceAll('\n', '\n> ')}${p2 ? ',' : ''}\n> $$\n`;
     }
   ).replaceAll(
     // 替换所有公式链接为公式本身。
+    reMath,
+    (match, p1, p2, offset, string) => {
+      const mathExp = decodeUriComponent(p1);
+      return `\n$$\n${mathExp}${p2 ? ',' : ''}\n$$\n`;
+    }
+  ).replaceAll(
+    // 替换所有 inline 公式链接为公式本身。
     reInlineMath,
     (match, p1, offset, string) => {
       const mathExp = decodeUriComponent(p1).replaceAll('\n', '');
@@ -193,9 +201,14 @@ function transformWithRegex(mdstring) {
     '\n\n#'
   ).replaceAll(
     // 替换所有高亮块。
+    /\:\:\:tips/g,
+    '\`\`\`ad-tip'
+  ).replaceAll(
+    // 替换所有高亮块。
     /\:\:\:([a-z])/g,
     '\`\`\`ad-$1'
   ).replaceAll(
+    // 替换所有高亮块。
     /\:\:\:/g,
     '\`\`\`'
   ).replaceAll(
