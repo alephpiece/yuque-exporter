@@ -4,10 +4,10 @@ import type { Link, Text } from 'mdast';
 import { remark } from 'remark';
 import { selectAll } from 'unist-util-select';
 import { visit, SKIP, CONTINUE} from 'unist-util-visit';
-import {gfmTable} from 'micromark-extension-gfm-table'
-import {gfmTableFromMarkdown, gfmTableToMarkdown} from 'mdast-util-gfm-table'
-import {fromMarkdown} from 'mdast-util-from-markdown'
-import {toMarkdown} from 'mdast-util-to-markdown'
+import {gfmTable} from 'micromark-extension-gfm-table';
+import {gfmTableFromMarkdown, gfmTableToMarkdown} from 'mdast-util-gfm-table';
+import {fromMarkdown} from 'mdast-util-from-markdown';
+import {toMarkdown} from 'mdast-util-to-markdown';
 import decodeUriComponent from 'decode-uri-component';
 import yaml from 'yaml';
 
@@ -34,11 +34,10 @@ export async function buildDoc(doc: TreeNode, mapping: Record<string, TreeNode>)
     ])
     .process(docDetail.body);
   
-  doc.content = frontmatter(doc) +
+  doc.content = frontmatter(doc, docDetail) +
     transformWithRegex(
       transformWithMdast(content.toString()
-      )
-    );
+      ));
 
   // FIXME: remark will transform `*` to `\*`
   doc.content = doc.content.replaceAll('\\*', '*');
@@ -86,9 +85,10 @@ function transformWithMdast(mdstring) {
   return toMarkdown(tree, {extensions: [gfmTableToMarkdown()]});
 }
 
-function frontmatter(doc) {
+function frontmatter(doc, docDetail) {
   const frontMatter = yaml.stringify({
-    //title: doc.title,
+    // title: doc.title,
+    id: dateToId(docDetail.created_at),
     url: `${host}/${doc.namespace}/${doc.url}`,
     // slug: doc.slug,
     // public: doc.public,
@@ -96,6 +96,15 @@ function frontmatter(doc) {
     // description: doc.description,
   });
   return `---\n${frontMatter}---\n\n`;
+}
+
+function dateToId(docDate: string) {
+  const dateObject = new Date(docDate);
+  return +dateObject
+    .toLocaleString()
+    .split(/[\/ :]/)
+    .map(str => { return str.padStart(2, '0'); })
+    .join('');
 }
 
 function relativeLink({ doc, mapping }: Options) {
@@ -151,7 +160,7 @@ function transformImages(opts: Options) {
         }
         else if (node.url.includes('https:')) {
           const urlObject = new URL(node.url);
-          const assetName = `${opts.doc.url}/${urlObject.pathname.split('/').pop()}`;
+          const assetName = `${opts.doc.url}-${urlObject.pathname.split('/').pop()}`;
           const filePath = path.join(assetsDir, assetName);
           download(node.url, path.join(outputDir, filePath), { headers: { 'User-Agent': userAgent } });
           //node.url = path.relative(path.dirname(docFilePath), filePath);
@@ -196,9 +205,9 @@ function transformWithRegex(mdstring) {
     reImage,
     '![[$1]]'
   ).replaceAll(
-    // 替换所有标题前的多换行为单换行。
-    /\n+?\#/g,
-    '\n\n#'
+    // 消除所有多余的换行符。
+    /\n\n+/g,
+    '\n\n'
   ).replaceAll(
     // 替换所有高亮块。
     /\:\:\:tips/g,
